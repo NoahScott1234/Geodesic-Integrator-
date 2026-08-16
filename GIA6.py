@@ -145,8 +145,8 @@ with st.sidebar.expander('Settings'):
         spin_parameter = st.number_input('Spin Parameter', min_value=0.0, max_value=1.0, value = 0.5)
     else:
         spin_parameter = 0
-    mass = st.number_input('Object Mass', min_value=0.0, max_value = 10000, value = 1)
-    sim_run_time = st.number_input('Simulation Run Time (Proper Time)', min_value = 0.0, max_value = 1000000, value = 100)
+    mass = st.number_input('Object Mass', min_value=0.0, max_value = 10000.0, value = 1.0)
+    sim_run_time = st.number_input('Simulation Run Time (Proper Time)', min_value = 0.0, max_value = 1000000.0, value = 100.0)
 
 columns = st.sidebar.columns(3)
 for mu in range (3):
