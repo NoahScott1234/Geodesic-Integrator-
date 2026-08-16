@@ -119,14 +119,9 @@ if plot_settings == '2D Plot':
 
 with st.sidebar.expander('Input Options', expanded = True):
     spherical = st.toggle('Spherical Coordinates', value = True)
+lightspeed = 1
+grav_const = 1
 
-
-if si_units:
-    lightspeed = 299792458
-    grav_const = 6.67e-11
-else:
-    lightspeed = 1
-    grav_const = 1
 if spherical:
     input_coordinates = coordinates_dict['Spherical']
 else:
