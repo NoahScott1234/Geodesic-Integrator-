@@ -80,19 +80,12 @@ Delta = sp.symbols('Delta')
 playplaceholder = st.empty()
 left, right = st.columns([4,2])
 
-if "trajectory" not in st.session_state:
-    st.session_state.trajectory = None
-
 st.set_page_config(page_title="Geodesic Integrator", layout="wide")
 
 from Metrics import GEODESICS
-from GR_Engine2 import (calculate_gamma_func, create_gamma_numeric, metric_numeric, gamma_value, cartesian_to_spherical)
+from GR_Engine2 import (calculate_gamma_func, create_gamma_numeric, metric_numeric, gamma_value, 
+                        cartesian_to_spherical, draw_schwarzchild, draw_kerr)
 
-three_velocity = [0,0,0]
-starting_position = [0,0,0]
-
-if st.sidebar.button('Reset Trajectory'):
-    st.session_state.trajectory = None
 with right:
     metric_name = st.selectbox("Select a metric:", list(GEODESICS.keys()))
 metric, coordinates = GEODESICS[metric_name]()
@@ -102,7 +95,6 @@ if particle_type == 'Massive Particle':
     massive = True
 else:
     massive = False
-
 plot_settings = st.sidebar.segmented_control('Plot Settings', ['3D Plot', '2D+1D Plot', '2D Plot'], default='3D Plot')
 if plot_settings == '3D Plot':
     ThreeD = True
@@ -118,16 +110,29 @@ if plot_settings == '2D Plot':
     twoplus1 = False
 
 with st.sidebar.expander('Input Options', expanded = True):
-    spherical = st.toggle('Spherical Coordinates', value = True)
-lightspeed = 1
-grav_const = 1
+    coordinate_type = st.segmented_control('Input Coordinates', ['Spherical', 'Cartesian'], default = 'Spherical')
+    if massive:
+        velocity_entry = st.segmented_control('Velocity Entry Mode', ['Component', 'Magnitude+Direction'], default = 'Component')
+    else: 
+        velocity_entry = 'Magnitude+Direction'
 
+    if coordinate_type == 'Spherical':
+        position_entry = st.segmented_control('Position Entry Mode', ['Component', 'Slider'], default = 'Component')
+if coordinate_type == 'Spherical':
+    spherical = True
+else:
+    spherical = False
+si_units = False
+if si_units:
+    lightspeed = 299792458
+    grav_const = 6.67e-11
+else:
+    lightspeed = 1
+    grav_const = 1
 if spherical:
     input_coordinates = coordinates_dict['Spherical']
 else:
     input_coordinates = coordinates_dict['Cartesian']
-
-
 
 loadplaceholder = st.empty()
 prev_metric = st.session_state.get('metric')
@@ -140,67 +145,82 @@ with loadplaceholder.spinner('Calculating Connection Coeffecients...'):
     if gamma_func is None:
         gamma_func = calculate_gamma_func(metric, coordinates)
         st.session_state['christoffel'] = gamma_func
-with st.sidebar.expander('Settings'):
+with st.sidebar.expander('Simulation Settings', expanded = True):
     if metric_name == 'Kerr Metric':
         spin_parameter = st.number_input('Spin Parameter', min_value=0.0, max_value=1.0, value = 0.5)
     else:
         spin_parameter = 0
-    mass = st.number_input('Object Mass', min_value=0.0, max_value = 10000.0, value = 1.0)
-    sim_run_time = st.number_input('Simulation Run Time (Proper Time)', min_value = 0.0, max_value = 1000000.0, value = 100.0)
+    mass = st.number_input('Object Mass', min_value = 0.0, value = 1.0)
+    sim_run_time = st.number_input('Simulation Run Time (Proper Time)', min_value = 0.0, value = 100.0)
+    fps = st.number_input('Animaton FPS', value = 1.0, min_value = 0.000001)
+    frame_duration = 1000/fps
+    trail_length = st.number_input('Animation Trail Length', value = 10, min_value = 1)
+with st.sidebar.expander('Black Hole Plot Settings', expanded=False):
+    if metric_name == 'Schwarzschild Metric':
+        show_event_horizon = st.checkbox('Show Horizon', value = True)
+        show_photon_sphere = st.checkbox('Show Photon Sphere', value = True)
 
+    if metric_name == 'Kerr Metric':
+        show_ergosphere = st.checkbox('Show Ergosphere', value = True)
+        
+        show_outer_horizon = st.checkbox('Show Outer Horizon', value = True)
+        
+        show_inner_horizon = st.checkbox('Show Inner Horizon', value = True)
 columns = st.sidebar.columns(3)
-for mu in range (3):
-    entry = columns[mu].number_input(f'd{input_coordinates[mu+1]}/dtau', key=f'd{mu}/dtau')
-    three_velocity[mu] = entry
+if velocity_entry == 'Magnitude+Direction' or massive == False:
+    if massive:
+        velocity_mag = st.sidebar.number_input(f'Velocity Magnitude', min_value = 0.0, max_value = lightspeed - 0.00000000000000000000001, value = 0.0, step = 0.01)
+    else:
+        velocity_mag = lightspeed
+    direction = np.zeros(3)
+    direction[0] = columns[0].number_input(f'{input_coordinates[1]} direction' , value = 0.5, key=f'd{1}')
+    direction[1] = columns[1].number_input(f'{input_coordinates[2]} direction' , key=f'd{2}')
+    direction[2] = columns[2].number_input(f'{input_coordinates[3]} direction' , key=f'd{3}')
+    normal = np.linalg.norm(direction)
+    normal_vector = direction/normal
+    three_velocity = velocity_mag*normal_vector
+if velocity_entry == 'Component':
+    vr = columns[0].number_input(f'd{input_coordinates[1]}/dtau' , value = 0.5, key=f'd{1}/dtau')
+    vtheta = columns[1].number_input(f'd{input_coordinates[2]}/dtau' , key=f'd{2}/dtau')
+    vphi = columns[2].number_input(f'd{input_coordinates[3]}/dtau' , key=f'd{3}/dtau')
+    three_velocity = [vr, vtheta, vphi]
 columns1 = st.sidebar.columns(3)
-for mu in range(3):
-    entry = columns1[mu].number_input(f'{(input_coordinates[mu+1])}', key = f'{mu} pos ')
-    entry = float(entry)
-    starting_position[mu] = entry
+if input_coordinates == [t,r,theta,phi]:
+    pos_r = columns1[0].number_input(f'{(input_coordinates[1])}', value = 10*mass, key = f'{1} pos ')
+    if position_entry == 'Slider':
+        angle_theta = columns1[1].slider('Angle Theta', value = np.pi/2, min_value = 0.0000001, max_value = np.pi*2, step = 0.01)
+        pos_theta = angle_theta
+        angle_phi = columns1[2].slider('Angle Phi', min_value = 0.0, max_value = np.pi*2, step = 0.01)
+        pos_phi = angle_phi
+    else:
+        pos_theta = columns1[1].number_input(f'{(input_coordinates[2])}', value = np.pi/2, key = f'{2} pos ')
+        pos_phi = columns1[2].number_input(f'{(input_coordinates[3])}', key = f'{3} pos ')
+if input_coordinates == [t,x,y,z]:
+    pos_r = columns1[0].number_input(f'{(input_coordinates[1])}', value = 10*mass, key = f'{1} pos ')
+    pos_theta = columns1[1].number_input(f'{(input_coordinates[2])}', key = f'{2} pos ')
+    pos_phi = columns1[2].number_input(f'{(input_coordinates[3])}', key = f'{3} pos ')
+
+starting_position = [pos_r, pos_theta, pos_phi]
+
 if spherical == False:
     spherical_state = cartesian_to_spherical(starting_position, three_velocity)
     spherical_position = spherical_state[:3]
     spherical_velocity = spherical_state[3:]
 
 
-with st.sidebar.expander('Select Quantities to Plot'):
-    with st.expander('Velocities (Proper Time)'):
-        show_dt_dtau = st.checkbox(f'Show Time Velocity Plot', value = True)
-        show_dx1_dtau = st.checkbox(f'Show {coordinates[1]} Velocity Plot', value = True)
-        show_dx2_dtau = st.checkbox(f'Show {coordinates[2]} Velocity Plot', value = True)
-        show_dx3_dtau = st.checkbox(f'Show {coordinates[3]} Velocity Plot', value = True)
-    with st.expander('Velocities (Coordinate Time)'):
-        show_dx1_dt =  st.checkbox(f'Show {coordinates[1]} Coordinate Velocity Plot', value = True)
-        show_dx2_dt =  st.checkbox(f'Show {coordinates[2]} Coordinate Velocity Plot', value = True)
-        show_dx3_dt =  st.checkbox(f'Show {coordinates[3]} Coordinate Velocity Plot', value = True)
-    with st.expander('Positions'):
-        show_t = st.checkbox(f'Show Time Plot', value = True)
-        show_dx1 = st.checkbox(f'Show {coordinates[1]} Plot', value = True)
-        show_dx2 = st.checkbox(f'Show {coordinates[2]} Plot', value = True)
-        show_dx3 = st.checkbox(f'Show {coordinates[3]} Plot', value = True)
-    with st.expander('Momenta'):
-        show_pt = st.checkbox(f'Show Time Momentum', value = True)
-        show_pr = st.checkbox(f'Show {coordinates[1]} Momentum', value = True)
-        show_ptheta = st.checkbox(f'Show {coordinates[2]} Momentum', value = True)
-        show_phi = st.checkbox(f'Show {coordinates[3]} Momentum', value = True)
-    with st.expander('Conserved Qunatities'):
-        show_energy = st.checkbox(f'Show Energy Plot', value = True)
-        show_angular_momentum = st.checkbox(f'Show Momentum', value = True)
-        show_carter_constant = st.checkbox(f'Show Carter Constant')
-    show_velocity = st.checkbox(f'Show velocity', value = True)
-    show_gtt = st.checkbox(f'Show Metric Time-Time Component', value = True)
-    show_grr = st.checkbox(f'Show Metric {coordinates[1]}-{coordinates[1]} Component', value = True)
-
 if st.session_state.trajectory is None:
     with right:
-        st.markdown("Metric Tensor")
         st.latex(r"g_{\mu\nu} = " + sp.latex(metric))
-        st.markdown("Coordinates")
         st.latex(r"x^\mu = \left(" + ", ".join(sp.latex(i) for i in input_coordinates) + r"\right)")
-        st.markdown("Initial 3 Velocity")
-        st.latex(f"[{three_velocity[0]}], [{three_velocity[1]}], [{three_velocity[2]}]")
-        st.markdown("Initial Position")
-        st.latex(f"[{starting_position[0]}], [{starting_position[1]}], [{starting_position[2]}]")
+        columns2,columns3 = st.columns([2,2])
+        with columns2:
+            st.markdown("Initial 3 Velocity")
+            st.markdown(f"[{three_velocity[0]:.3f}], [{three_velocity[1]:.3f}], [{three_velocity[2]:.3f}]")
+        with columns3:
+            st.markdown("Initial Position")
+            st.markdown(f"[{starting_position[0]:.3f}], [{starting_position[1]:.3f}], [{starting_position[2]:.3f}]")
+
+
 
 def position_plot(starting_position, three_velocity):
     x_position_plot = starting_position[0] * np.sin(starting_position[1]) * np.cos(starting_position[2])
@@ -215,6 +235,13 @@ def position_plot(starting_position, three_velocity):
     norm_velocity = velocity_plot/norm_vector
     return [*position_plot, *norm_velocity]
 
+if 'draw' not in st. session_state:
+    st.session_state.draw = None
+if st.session_state.draw is None:
+    Xh, Yh, Zh, Xp, Yp, Zp = draw_schwarzchild(grav_const, mass, lightspeed)
+    Xih, Yih, Zih, Xoh, Yoh, Zoh, Xe, Ye, Ze = draw_kerr(grav_const, mass, lightspeed, spin_parameter)
+
+
 with left:
     loadplaceholder = st.empty()
     sliderplaceholder = st.empty()
@@ -225,38 +252,17 @@ with left:
         if ThreeD:
             figure1 = go.Figure()
             if metric_name == 'Schwarzschild Metric':
-                r_h = 2 * grav_const * mass / lightspeed**2
-                r_p = 3 * grav_const * mass / lightspeed**2
-                u = np.linspace(0, 2*np.pi, 60)
-                v = np.linspace(0, np.pi, 30)
-                U, V = np.meshgrid(u, v)
-                X = r_h * np.cos(U) * np.sin(V)
-                Y = r_h * np.sin(U) * np.sin(V)
-                Z = r_h * np.cos(V)
-                figure1.add_trace(go.Surface(x=X,y=Y,z=Z,colorscale=[[0, "black"], [1, "black"]],showscale=False,opacity=1,name="Event Horizon"))
-                X = r_p * np.cos(U) * np.sin(V)
-                Y = r_p * np.sin(U) * np.sin(V)
-                Z = r_p * np.cos(V)
-                figure1.add_trace(go.Surface(x=X,y=Y,z=Z,colorscale=[[0, "red"], [1, "red"]],showscale=False,opacity=0.01,name="Photon Sphere"))
+                if show_event_horizon:
+                    figure1.add_trace(go.Surface(x=Xh,y=Yh,z=Zh,colorscale=[[0, "black"], [1, "black"]],showscale=False,opacity=1,name="Event Horizon"))
+                if show_photon_sphere:
+                    figure1.add_trace(go.Surface(x=Xp,y=Yp,z=Zp,colorscale=[[0, "red"], [1, "red"]],showscale=False,opacity=0.01,name="Photon Sphere"))
             if metric_name == 'Kerr Metric':
-                r_o = grav_const * mass + np.sqrt(grav_const**2 * mass**2 - spin_parameter**2)
-                r_i = grav_const * mass - np.sqrt(grav_const**2 * mass**2 - spin_parameter**2)
-                u = np.linspace(0, 2*np.pi, 60)
-                v = np.linspace(0, np.pi, 30)
-                U, V = np.meshgrid(u, v)
-                X = r_i * np.cos(U) * np.sin(V)
-                Y = r_i * np.sin(U) * np.sin(V)
-                Z = r_i * np.cos(V)
-                figure1.add_trace(go.Surface(x=X,y=Y,z=Z,colorscale=[[0, "black"], [1, "black"]],showscale=False,opacity=1,name="Inner Event Horizon"))
-                X = r_o * np.cos(U) * np.sin(V)
-                Y = r_o * np.sin(U) * np.sin(V)
-                Z = r_o * np.cos(V)
-                figure1.add_trace(go.Surface(x=X,y=Y,z=Z,colorscale=[[0, "black"], [1, "black"]],showscale=False,opacity=0.8,name="Outer Event Horizon"))
-                r_e = np.sqrt((grav_const * mass)**2 -(spin_parameter * np.cos(V))**2) + grav_const * mass
-                X = r_e * np.cos(U) * np.sin(V)
-                Y = r_e * np.sin(U) * np.sin(V)
-                Z = r_e * np.cos(V)
-                figure1.add_trace(go.Surface(x=X,y=Y,z=Z,colorscale=[[0, "yellow"], [1, "yellow"]],showscale=False,opacity=0.1,name="Ergosphere"))
+                if show_inner_horizon:
+                    figure1.add_trace(go.Surface(x=Xih,y=Yih,z=Zih,colorscale=[[0, "black"], [1, "black"]],showscale=False,opacity=1,name="Inner Event Horizon"))
+                if show_outer_horizon:
+                    figure1.add_trace(go.Surface(x=Xoh,y=Yoh,z=Zoh,colorscale=[[0, "black"], [1, "black"]],showscale=False,opacity=0.8,name="Outer Event Horizon"))
+                if show_ergosphere:
+                    figure1.add_trace(go.Surface(x=Xe,y=Ye,z=Ze,colorscale=[[0, "yellow"], [1, "yellow"]],showscale=False,opacity=0.1,name="Ergosphere"))
             figure1.update_layout(scene=dict(aspectmode="data"))
             if spherical:
                 values = position_plot(starting_position, three_velocity)
@@ -267,8 +273,8 @@ with left:
                 [vx,vy,vz] = three_velocity
             
             figure1.add_trace(go.Cone(x=[x0],y=[y0],z=[z0],u=[vx],v=[vy],w=[vz],sizemode="absolute",
-            sizeref=0.2,showscale=False,colorscale=[[0, "red"], [1, "red"]],anchor="tip"))
-            placeholder3d.plotly_chart(figure1, use_container_width=True)
+            sizeref=0.2,showscale=False,colorscale=[[0, "red"], [1, "red"]],anchor="cm"))
+            placeholder3d.plotly_chart(figure1, width='stretch')
         else:
             if metric_name =='Kerr Metric':
                 r_o = grav_const * mass + np.sqrt(grav_const**2 * mass**2 - spin_parameter**2)
@@ -298,10 +304,19 @@ if spherical == False:
     three_velocity = spherical_velocity
 starting_position = [0,*starting_position]
 
-        
+if st.session_state.trajectory is not None:
+    saved_initial_conditions = st.session_state.get('Saved Initial Conditions')
+    if saved_initial_conditions is None or not np.array_equal(saved_initial_conditions[0], three_velocity) or not np.array_equal(saved_initial_conditions[1], starting_position) or saved_initial_conditions[2] != mass or saved_initial_conditions[3] != spin_parameter or saved_initial_conditions[4] != sim_run_time or saved_initial_conditions[5] != frame_duration or saved_initial_conditions[6] != trail_length:
+        st.session_state.trajectory = None
+        st.session_state.animation = None
+        st.session_state.plots = None
+        st.session_state.draw = None
+        st.rerun()
+
 with left:
-    
     if st.button('Plot Geodesic'):
+        st.session_state['Saved Initial Conditions'] = (three_velocity, starting_position, mass, spin_parameter, sim_run_time, frame_duration, trail_length)
+        st.session_state['animation'] = None
         with loadplaceholder.spinner('Plotting Geodesic'):
             gamma_numeric = create_gamma_numeric(gamma_func, coordinates, grav_const, mass, lightspeed, spin_parameter)
             def acceleration_value(gamma_val, velocities):
@@ -340,8 +355,7 @@ with left:
                             [A,0,0,B],
                             [0,1/np.sqrt(g[1,1]),0,0],
                             [0,0,1/np.sqrt(g[2,2]),0],
-                            [0,0,0,1/np.sqrt(g[3,3])]
-                        ])
+                            [0,0,0,1/np.sqrt(g[3,3])]])
                 normalized_4_velocity = {}
                 for mu in range (4):
                     metric_4_velocity = 0 
@@ -451,53 +465,72 @@ if st.session_state.trajectory is not None:
     r_p = 3 * grav_const * mass / lightspeed**2
 
     with left:
-        frame = sliderplaceholder.slider('Proper Time', min_value=0, max_value=len(tau)-1,value = 0, step = 1)
+        frame = sliderplaceholder.slider('Proper Time', min_value=0, max_value=len(tau)-1,value = len(tau)-1, step = 1)
         if twoplus1:
             figuret = go.Figure()
             figuret.add_trace(go.Scatter3d(x=x[:frame+1],y=y[:frame+1],z=t[:frame+1], mode="lines",name="Geodesic"))
             u = np.linspace(0, 2*np.pi, 60)
             j = np.linspace(t[0],t[frame],100)
             U, Z = np.meshgrid(u, j)
+            if metric_name == 'kerr_metric':
+              r_h = grav_const * mass + np.sqrt(grav_const**2 * mass**2 - spin_parameter**2)  
             X = r_h * np.cos(U)
             Y = r_h * np.sin(U)
             figuret.add_trace(go.Surface(x=X,y=Y,z=Z,colorscale=[[0, "black"], [1, "black"]],showscale=False,opacity=1,name="Event Horizon"))
             figuret.update_layout(scene=dict(aspectmode="data"))
             placeholder3d.plotly_chart(figuret, use_container_width=True)
         elif ThreeD:
+            st.subheader('Animation')
             figure = go.Figure()
+            if 'animation' not in st.session_state:
+                st.session_state['animation'] = None
+            if st.session_state['animation'] is None:
+                frames = []
+                fig = go.Figure(data=[go.Scatter3d(x=[x[0]],y=[y[0]],z=[z[0]],mode="lines+markers",name="Geodesic")])
+                for i in range(len(tau)):
+                    frames.append(go.Frame(data=[go.Scatter3d(x=x[i-trail_length:i],y=y[i-trail_length:i],z=z[i-trail_length:i],mode="lines")],name=str(i)))
+                fig.update_layout(updatemenus=[dict(type="buttons",buttons=[dict(label="Play",method="animate",args=[None,{"frame": {"duration": frame_duration,"redraw": True},"fromcurrent": True}]),dict(label="Pause",method="animate",args=[[None],{"mode": "immediate","frame": {"duration": 0}}])])])
+                fig.frames = frames
+                xmin, xmax = np.min(x), np.max(x)
+                ymin, ymax = np.min(y), np.max(y)
+                zmin, zmax = np.min(z), np.max(z)
+                max_range = max(xmax - xmin,ymax - ymin,zmax - zmin)
+                xmid = (xmax + xmin) / 2
+                ymid = (ymax + ymin) / 2
+                zmid = (zmax + zmin) / 2
+                half_range = max_range / 2
+                fig.update_layout(scene=dict(dragmode="orbit",uirevision="keep-camera",
+                    xaxis=dict(range=[(xmid - half_range) - 2.5, (xmid + half_range) + 2.5],autorange=False),
+                    yaxis=dict(range=[(ymid - half_range) - 2.5, (ymid + half_range) + 2.5],autorange=False),
+                    zaxis=dict(range=[(zmid - half_range) - 2.5, (zmid + half_range) + 2.5],autorange=False),aspectmode="cube"))
+                st.session_state['animation'] = fig
+            if metric_name == 'Schwarzschild Metric':
+                if show_event_horizon:
+                    st.session_state['animation'].add_trace(go.Surface(x=Xh,y=Yh,z=Zh,colorscale=[[0, "black"], [1, "black"]],showscale=False,opacity=1,name="Event Horizon"))
+                if show_photon_sphere:
+                    st.session_state['animation'].add_trace(go.Surface(x=Xp,y=Yp,z=Zp,colorscale=[[0, "red"], [1, "red"]],showscale=False,opacity=0.01,name="Photon Sphere"))
+            if metric_name == 'Kerr Metric':
+                if show_inner_horizon:
+                    st.session_state['animation'].add_trace(go.Surface(x=Xih,y=Yih,z=Zih,colorscale=[[0, "black"], [1, "black"]],showscale=False,opacity=1,name="Inner Event Horizon"))
+                if show_outer_horizon:
+                    st.session_state['animation'].add_trace(go.Surface(x=Xoh,y=Yoh,z=Zoh,colorscale=[[0, "black"], [1, "black"]],showscale=False,opacity=0.8,name="Outer Event Horizon"))
+                if show_ergosphere:
+                    st.session_state['animation'].add_trace(go.Surface(x=Xe,y=Ye,z=Ze,colorscale=[[0, "yellow"], [1, "yellow"]],showscale=False,opacity=0.1,name="Ergosphere"))
+            st.plotly_chart(st.session_state.get('animation'), use_container_width=True)     
             figure.add_trace(go.Scatter3d(x=x[:frame+1],y=y[:frame+1],z=z[:frame+1], mode="lines",name="Geodesic"))
             if metric_name == 'Schwarzschild Metric':
-                u = np.linspace(0, 2*np.pi, 60)
-                v = np.linspace(0, np.pi, 30)
-                U, V = np.meshgrid(u, v)
-                X = r_h * np.cos(U) * np.sin(V)
-                Y = r_h * np.sin(U) * np.sin(V)
-                Z = r_h * np.cos(V)
-                figure.add_trace(go.Surface(x=X,y=Y,z=Z,colorscale=[[0, "black"], [1, "black"]],showscale=False,opacity=1,name="Event Horizon"))
-                X = r_p * np.cos(U) * np.sin(V)
-                Y = r_p * np.sin(U) * np.sin(V)
-                Z = r_p * np.cos(V)
-                figure.add_trace(go.Surface(x=X,y=Y,z=Z,colorscale=[[0, "red"], [1, "red"]],showscale=False,opacity=0.01,name="Photon Sphere"))
+                if show_event_horizon:
+                    figure.add_trace(go.Surface(x=Xh,y=Yh,z=Zh,colorscale=[[0, "black"], [1, "black"]],showscale=False,opacity=1,name="Event Horizon"))
+                if show_photon_sphere:
+                    figure.add_trace(go.Surface(x=Xp,y=Yp,z=Zp,colorscale=[[0, "red"], [1, "red"]],showscale=False,opacity=0.01,name="Photon Sphere"))
             if metric_name == 'Kerr Metric':
-                r_o = grav_const * mass + np.sqrt(grav_const**2 * mass**2 - spin_parameter**2)
-                r_i = grav_const * mass - np.sqrt(grav_const**2 * mass**2 - spin_parameter**2)
-                u = np.linspace(0, 2*np.pi, 60)
-                v = np.linspace(0, np.pi, 30)
-                U, V = np.meshgrid(u, v)
-                X = r_i * np.cos(U) * np.sin(V)
-                Y = r_i * np.sin(U) * np.sin(V)
-                Z = r_i * np.cos(V)
-                figure.add_trace(go.Surface(x=X,y=Y,z=Z,colorscale=[[0, "black"], [1, "black"]],showscale=False,opacity=1,name="Inner Event Horizon"))
-                X = r_o * np.cos(U) * np.sin(V)
-                Y = r_o * np.sin(U) * np.sin(V)
-                Z = r_o * np.cos(V)
-                figure.add_trace(go.Surface(x=X,y=Y,z=Z,colorscale=[[0, "black"], [1, "black"]],showscale=False,opacity=0.8,name="Outer Event Horizon"))
-                r_e = np.sqrt((grav_const * mass)**2 -(spin_parameter * np.cos(V))**2) + grav_const * mass
-                X = r_e * np.cos(U) * np.sin(V)
-                Y = r_e * np.sin(U) * np.sin(V)
-                Z = r_e * np.cos(V)
-                figure.add_trace(go.Surface(x=X,y=Y,z=Z,colorscale=[[0, "yellow"], [1, "yellow"]],showscale=False,opacity=0.1,name="Ergosphere"))
-            figure.update_layout(scene=dict(aspectmode="data"))
+                if show_inner_horizon:
+                    figure.add_trace(go.Surface(x=Xih,y=Yih,z=Zih,colorscale=[[0, "black"], [1, "black"]],showscale=False,opacity=1,name="Inner Event Horizon"))
+                if show_outer_horizon:
+                    figure.add_trace(go.Surface(x=Xoh,y=Yoh,z=Zoh,colorscale=[[0, "black"], [1, "black"]],showscale=False,opacity=0.8,name="Outer Event Horizon"))
+                if show_ergosphere:
+                    figure.add_trace(go.Surface(x=Xe,y=Ye,z=Ze,colorscale=[[0, "yellow"], [1, "yellow"]],showscale=False,opacity=0.1,name="Ergosphere"))
+            figure.update_layout(scene=dict(aspectmode="data",dragmode="orbit",uirevision="keep-camera"))
             placeholder3d.plotly_chart(figure, use_container_width=True)
         else:
             fig1, ax = plt.subplots()
@@ -533,254 +566,255 @@ if st.session_state.trajectory is not None:
             st.latex(r"x^\mu = \left(" + ", ".join(f'{float(i):.{int(decimal_accuracy)}f}' for i in coordinate_positions) + r"\right)")
             st.latex(r"\frac{dx^\mu}{d\tau} = \left(" + ", ".join(rf"\frac{{d\,{sp.latex(i)}}}{{d\tau}}" for i in input_coordinates) + r"\right)")
             st.latex(r"\frac{dx^\mu}{d\tau} = \left(" + ", ".join(f'{float(i):.{int(decimal_accuracy)}f}' for i in coordinate_velocites) + r"\right)")
-    p = np.zeros((len(tau), 4))
-    Killing_Vectors= []
-    K = [0,0,0,0]
-    energy = np.zeros((len(tau)))
-    angular_momentum = np.zeros((len(tau)))
-    Q = np.zeros((len(tau)))
-    Q2 = np.zeros((len(tau)))
-    mew = 1 if massive else 0
-    for mu in range(4):
-        if sp.diff(metric, coordinates[mu]) == sp.zeros(4):
-            K = np.zeros(4)
-            K[mu] = 1
-            Killing_Vectors.append(K)
-    metric_callable = metric_numeric(metric, coordinates, grav_const, mass, lightspeed, spin_parameter)
-    metric_values = np.array([metric_callable(*point) for point in positions])
-    for i in range(len(tau)):
+    if 'plots' not in st.session_state:
+        st.session_state.plots = None
+    if st.session_state.plots is None:
+        p = np.zeros((len(tau), 4))
+        Killing_Vectors= []
+        K = [0,0,0,0]
+        energy = np.zeros((len(tau)))
+        angular_momentum = np.zeros((len(tau)))
+        Q = np.zeros((len(tau)))
+        Q2 = np.zeros((len(tau)))
+        mew = 1 if massive else 0
         for mu in range(4):
-            momentum = 0
-            for nu in range(4):
-                momentum += metric_values[i, mu, nu] * velocity_list[i, nu]
-            p[i,mu] = momentum
-        L = 0
-        E = 0
-        for mu in range (4):
-            E += p[i,mu] * Killing_Vectors[0][mu]
-        energy[i] = -E
-        for mu in range(4):
-            L += p[i,mu]*Killing_Vectors[1][mu]
-        angular_momentum[i] = L
-        Q[i] = (p[i,2])**2 + np.cos(positions[i,2])**2 * (spin_parameter*spin_parameter*(mew**2 - energy[i]**2) + (angular_momentum[i]**2/(np.sin(positions[i,2])**2)))
-        Q2[i] = p[i,2]**2 + np.cos(positions[i,2])**2 * spin_parameter**2 * (mew**2 - energy[0]**2) + angular_momentum[0]**2 /(np.tan(positions[i,2])**2)
-    left1, middle, right1 = st.columns([3,3,3])
-    with left1:
-        with st.expander('Velocities (Proper Time)'):
-            if show_dt_dtau:
-                fig2, bx = plt.subplots()
-                bx.plot(tau, dt_dtau)
-                bx.set_ylabel("Time Velocity")
-                if massive:
-                    bx.set_xlabel('Proper Time')
-                else: 
-                    bx.set_xlabel('Affine Parameter')
-                st.pyplot(fig2)
-            if show_dx1_dtau:
-                fig3, cx = plt.subplots()
-                cx.plot(tau, dr_dtau)
-                cx.set_ylabel(f'{coordinates[1]} Velocity')
-                if massive:
-                    cx.set_xlabel('Proper Time')
-                else: 
-                    cx.set_xlabel('Affine Parameter')
-                st.pyplot(fig3)
-            if show_dx2_dtau:
-                fig4, dx = plt.subplots()
-                dx.plot(tau, dtheta_dtau)
-                dx.set_ylabel(f'{coordinates[2]} Velocity')
-                if massive:
-                    dx.set_xlabel('Proper Time')
-                else: 
-                    dx.set_xlabel('Affine Parameter')
-                st.pyplot(fig4)
-            if show_dx3_dtau:
-                fig5, ex = plt.subplots()
-                ex.plot(tau, dphi_dtau)
-                ex.set_ylabel(f'{coordinates[3]} Velocity')
-                if massive:
-                    ex.set_xlabel('Proper Time')
-                else: 
-                    ex.set_xlabel('Affine Parameter')
-                st.pyplot(fig5)
-            if show_velocity:
-                velocity = np.sqrt(dr_dtau**2 + dtheta_dtau**2 + dphi_dtau**2)
-                fig12, lx = plt.subplots()
-                lx.plot(tau, velocity)
-                lx.set_ylabel('Velocity')
-                if massive:
-                    lx.set_xlabel('Proper Time')
-                else: 
-                    lx.set_xlabel('Affine Parameter')
-                st.pyplot(fig12)
-    with middle:
-        with st.expander('Positions'):
-            if show_t:
-                fig6, fx = plt.subplots()
-                fx.plot(tau, t)
-                fx.set_ylabel("Time")
-                if massive:
-                    fx.set_xlabel('Proper Time')
-                else: 
-                    fx.set_xlabel('Affine Parameter')
-                st.pyplot(fig6)
-            if show_dx1:
-                fig7, gx = plt.subplots()
-                gx.plot(tau, r)
-                gx.set_ylabel(f'{coordinates[1]}')
-                if massive:
-                    gx.set_xlabel('Proper Time')
-                else: 
-                    gx.set_xlabel('Affine Parameter')
-                st.pyplot(fig7)
-            if show_dx2:
-                fig8, hx = plt.subplots()
-                hx.plot(tau, theta)
-                hx.set_ylabel(f'{coordinates[2]}')
-                if massive:
-                    hx.set_xlabel('Proper Time')
-                else: 
-                    hx.set_xlabel('Affine Parameter')
-                st.pyplot(fig8)
-            if show_dx3:
-                fig9, ix = plt.subplots()
-                ix.plot(tau, phi)
-                ix.set_ylabel(f'{coordinates[3]}')
-                if massive:
-                    ix.set_xlabel('Proper Time')
-                else: 
-                    ix.set_xlabel('Affine Parameter')
-                st.pyplot(fig9)
-        with st.expander('Momenta'):
-            if show_pt:
-                fig20, tx = plt.subplots()
-                tx.plot(tau, p[:,0])
-                tx.set_ylabel(f'{coordinates[0]} Momentum')
-                if massive:
-                    tx.set_xlabel('Proper Time')
-                else: 
-                    tx.set_xlabel('Affine Parameter')
-                st.pyplot(fig20)
-            if show_pr:
-                fig21, ux = plt.subplots()
-                ux.plot(tau,  p[:,1])
-                ux.set_ylabel(f'{coordinates[1]} Momentum')
-                if massive:
-                    ux.set_xlabel('Proper Time')
-                else: 
-                    ux.set_xlabel('Affine Parameter')
-                st.pyplot(fig21)
-            if show_ptheta:
-                fig23, wx = plt.subplots()
-                p_theta = velocity_list[:,2]*metric_values[:,2,2]
-                wx.plot(tau, p_theta)
-                wx.set_ylabel('Theta Momentum')
-                if massive:
-                    wx.set_xlabel('Proper Time')
-                else: 
-                    wx.set_xlabel('Affine Parameter')
-                st.pyplot(fig23)
-                fig19, xx = plt.subplots()
-                xx.plot(tau, p[:,2])
-                xx.set_ylabel(f'{coordinates[2]} Momentum')
-                if massive:
-                    xx.set_xlabel('Proper Time')
-                else: 
-                    xx.set_xlabel('Affine Parameter')
-                st.pyplot(fig19)
-            if show_ptheta:
-                fig22, vx = plt.subplots()
-                vx.plot(tau, p[:,3])
-                vx.set_ylabel(f'{coordinates[3]} Momentum')
-                if massive:
-                    vx.set_xlabel('Proper Time')
-                else: 
-                    vx.set_xlabel('Affine Parameter')
-                st.pyplot(fig22)
-    with right1:
-        with st.expander('Conserved Qunatities'):
-            if show_energy:
-                fig10, jx = plt.subplots()
-                jx.plot(tau, energy)
-                jx.set_ylabel('Energy')
-                if massive:
-                    jx.set_xlabel('Proper Time')
-                else: 
-                    jx.set_xlabel('Affine Parameter')
-                st.pyplot(fig10)
-            if show_angular_momentum:
-                fig11, kx = plt.subplots()
-                kx.plot(tau, angular_momentum)
-                kx.set_ylabel('Angular Momentum')
-                if massive:
-                    kx.set_xlabel('Proper Time')
-                else: 
-                    kx.set_xlabel('Affine Parameter')
-                st.pyplot(fig11)
-            if show_carter_constant:
-                fig18, rx = plt.subplots()
-                rx.plot(tau, Q2)
-                rx.set_ylabel('Carter Constant')
-                if massive:
-                    rx.set_xlabel('Proper Time')
-                else: 
-                    rx.set_xlabel('Affine Parameter')
-                st.pyplot(fig18)
-                fig24, zx = plt.subplots()
-                Q_error =(Q2[:len(tau)] - Q2[0])/Q2[0]
-                zx.plot(tau, Q_error)
-                zx.set_ylabel('Carter Constant Error')
-                if massive:
-                    zx.set_xlabel('Proper Time')
-                else: 
-                    zx.set_xlabel('Affine Parameter')
-                st.pyplot(fig24)
-    with left1:
-        with st.expander('Coordinate Velocities'):
-            if show_dx1_dt:
-                dx1_dt = dr_dtau/ dt_dtau
-                fig13, mx = plt.subplots()
-                mx.plot(t, dx1_dt)
-                mx.set_ylabel(f'{coordinates[1]} Velocity')
-                mx.set_xlabel('Coordinate Time')
-                st.pyplot(fig13)
-            if show_dx2_dt:
-                dx2_dt = dtheta_dtau/ dt_dtau
-                fig14, nx = plt.subplots()
-                nx.plot(t, dx2_dt)
-                nx.set_ylabel(f'{coordinates[2]} Velocity')
-                nx.set_xlabel('Coordinate Time')
-                st.pyplot(fig14)
-            if show_dx3_dt:
-                dx3_dt = dphi_dtau/ dt_dtau
-                fig15, ox = plt.subplots()
-                ox.plot(t, dx3_dt)
-                ox.set_ylabel(f'{coordinates[3]} Velocity')
-                ox.set_xlabel('Coordinate Time')
-                st.pyplot(fig15)
-    with right1:
-        with st.expander('Metric Components'):
-            if show_gtt:
-                g_00_val = np.zeros((len(tau)))
-                for i in range((len(tau))):
-                    g_00_val[i] = metric_values[i,0,0] 
-                fig16, px = plt.subplots()
-                px.plot(tau, g_00_val)
-                px.set_ylabel(f'g_00 Value')
-                if massive:
-                    px.set_xlabel('Proper Time')
-                else: 
-                    px.set_xlabel('Affine Parameter')
-                st.pyplot(fig16)
-            if show_grr:
-                g_11_val = np.zeros((len(tau)))
-                for i in range((len(tau))):
-                    g_11_val[i] = metric_values[i,1,1]
-                fig17, qx = plt.subplots()
-                qx.plot(tau, g_11_val)
-                qx.set_ylabel(f'g_11 Value')
-                if massive:
-                    qx.set_xlabel('Proper Time')
-                else: 
-                    qx.set_xlabel('Affine Parameter')
-                st.pyplot(fig17)
+            if sp.diff(metric, coordinates[mu]) == sp.zeros(4):
+                K = np.zeros(4)
+                K[mu] = 1
+                Killing_Vectors.append(K)
+        metric_callable = metric_numeric(metric, coordinates, grav_const, mass, lightspeed, spin_parameter)
+        metric_values = np.array([metric_callable(*point) for point in positions])
+        for i in range(len(tau)):
+            for mu in range(4):
+                momentum = 0
+                for nu in range(4):
+                    momentum += metric_values[i, mu, nu] * velocity_list[i, nu]
+                p[i,mu] = momentum
+            L = 0
+            E = 0
+            for mu in range (4):
+                E += p[i,mu] * Killing_Vectors[0][mu]
+            energy[i] = -E
+            for mu in range(4):
+                L += p[i,mu]*Killing_Vectors[1][mu]
+            angular_momentum[i] = L
+            Q[i] = (p[i,2])**2 + np.cos(positions[i,2])**2 * (spin_parameter*spin_parameter*(mew**2 - energy[i]**2) + (angular_momentum[i]**2/(np.sin(positions[i,2])**2)))
+            Q2[i] = p[i,2]**2 + np.cos(positions[i,2])**2 * spin_parameter**2 * (mew**2 - energy[0]**2) + angular_momentum[0]**2 /(np.tan(positions[i,2])**2)
+
+        fig2, bx = plt.subplots()
+        bx.plot(tau, dt_dtau)
+        bx.set_ylabel("Time Velocity")
+        if massive:
+            bx.set_xlabel('Proper Time')
+        else: 
+            bx.set_xlabel('Affine Parameter')
+        st.session_state['plot2'] = fig2
+        fig3, cx = plt.subplots()
+        cx.plot(tau, dr_dtau)
+        cx.set_ylabel(f'{coordinates[1]} Velocity')
+        if massive:
+            cx.set_xlabel('Proper Time')
+        else: 
+            cx.set_xlabel('Affine Parameter')
+        st.session_state['plot3'] = fig3
+        fig4, dx = plt.subplots()
+        dx.plot(tau, dtheta_dtau)
+        dx.set_ylabel(f'{coordinates[2]} Velocity')
+        if massive:
+            dx.set_xlabel('Proper Time')
+        else: 
+            dx.set_xlabel('Affine Parameter')
+        st.session_state['plot4'] = fig4
+        fig5, ex = plt.subplots()
+        ex.plot(tau, dphi_dtau)
+        ex.set_ylabel(f'{coordinates[3]} Velocity')
+        if massive:
+            ex.set_xlabel('Proper Time')
+        else: 
+            ex.set_xlabel('Affine Parameter')
+        st.session_state['plot5'] = fig5
+        velocity = np.sqrt(dr_dtau**2 + dtheta_dtau**2 + dphi_dtau**2)
+        fig12, lx = plt.subplots()
+        lx.plot(tau, velocity)
+        lx.set_ylabel('Velocity')
+        if massive:
+            lx.set_xlabel('Proper Time')
+        else: 
+            lx.set_xlabel('Affine Parameter')
+        st.session_state['plot12'] = fig12
+        fig6, fx = plt.subplots()
+        fx.plot(tau, t)
+        fx.set_ylabel("Time")
+        if massive:
+            fx.set_xlabel('Proper Time')
+        else: 
+            fx.set_xlabel('Affine Parameter')
+        st.session_state['plot6'] = fig6
+        fig7, gx = plt.subplots()
+        gx.plot(tau, r)
+        gx.set_ylabel(f'{coordinates[1]}')
+        if massive:
+            gx.set_xlabel('Proper Time')
+        else: 
+            gx.set_xlabel('Affine Parameter')
+        st.session_state['plot7'] = fig7
+        fig8, hx = plt.subplots()
+        hx.plot(tau, theta)
+        hx.set_ylabel(f'{coordinates[2]}')
+        if massive:
+            hx.set_xlabel('Proper Time')
+        else: 
+            hx.set_xlabel('Affine Parameter')
+        st.session_state['plot8'] = fig8
+        fig9, ix = plt.subplots()
+        ix.plot(tau, phi)
+        ix.set_ylabel(f'{coordinates[3]}')
+        if massive:
+            ix.set_xlabel('Proper Time')
+        else: 
+            ix.set_xlabel('Affine Parameter')
+        st.session_state['plot9'] = fig9
+        fig20, tx = plt.subplots()
+        tx.plot(tau, p[:,0])
+        tx.set_ylabel(f'{coordinates[0]} Momentum')
+        if massive:
+            tx.set_xlabel('Proper Time')
+        else: 
+            tx.set_xlabel('Affine Parameter')
+        st.session_state['plot20'] = fig20
+        fig21, ux = plt.subplots()
+        ux.plot(tau, p[:,1])
+        ux.set_ylabel(f'{coordinates[1]} Momentum')
+        if massive:
+            ux.set_xlabel('Proper Time')
+        else: 
+            ux.set_xlabel('Affine Parameter')
+        st.session_state['plot21'] = fig21
+        fig19, xx = plt.subplots()
+        xx.plot(tau, p[:,2])
+        xx.set_ylabel(f'{coordinates[2]} Momentum')
+        if massive:
+            xx.set_xlabel('Proper Time')
+        else: 
+            xx.set_xlabel('Affine Parameter')
+        st.session_state['plot19'] = fig19
+        fig22, vx = plt.subplots()
+        vx.plot(tau, p[:,3])
+        vx.set_ylabel(f'{coordinates[3]} Momentum')
+        if massive:
+            vx.set_xlabel('Proper Time')
+        else: 
+            vx.set_xlabel('Affine Parameter')
+        st.session_state['plot22'] = fig22
+        fig10, jx = plt.subplots()
+        jx.plot(tau, energy)
+        jx.set_ylabel('Energy')
+        if massive:
+            jx.set_xlabel('Proper Time')
+        else: 
+            jx.set_xlabel('Affine Parameter')
+        st.session_state['plot10'] = fig10
+        fig11, kx = plt.subplots()
+        kx.plot(tau, angular_momentum)
+        kx.set_ylabel('Angular Momentum')
+        if massive:
+            kx.set_xlabel('Proper Time')
+        else: 
+            kx.set_xlabel('Affine Parameter')
+        st.session_state['plot11'] = fig11
+        fig18, rx = plt.subplots()
+        rx.plot(tau, Q2)
+        rx.set_ylabel('Carter Constant')
+        if massive:
+            rx.set_xlabel('Proper Time')
+        else: 
+            rx.set_xlabel('Affine Parameter')
+        st.session_state['plot18'] = fig18
+        fig24, zx = plt.subplots()
+        Q_error =(Q2[:len(tau)] - Q2[0])/Q2[0]
+        zx.plot(tau, Q_error)
+        zx.set_ylabel('Carter Constant Error')
+        if massive:
+            zx.set_xlabel('Proper Time')
+        else: 
+            zx.set_xlabel('Affine Parameter')
+        st.session_state['plot24'] = fig24
+        dx1_dt = dr_dtau/ dt_dtau
+        fig13, mx = plt.subplots()
+        mx.plot(t, dx1_dt)
+        mx.set_ylabel(f'{coordinates[1]} Velocity')
+        mx.set_xlabel('Coordinate Time')
+        st.session_state['plot13'] = fig13
+        dx2_dt = dtheta_dtau/ dt_dtau
+        fig14, nx = plt.subplots()
+        nx.plot(t, dx2_dt)
+        nx.set_ylabel(f'{coordinates[2]} Velocity')
+        nx.set_xlabel('Coordinate Time')
+        st.session_state['plot14'] = fig14
+        dx3_dt = dphi_dtau/ dt_dtau
+        fig15, ox = plt.subplots()
+        ox.plot(t, dx3_dt)
+        ox.set_ylabel(f'{coordinates[3]} Velocity')
+        ox.set_xlabel('Coordinate Time')
+        st.session_state['plot15'] = fig15
+        g_00_val = np.zeros((len(tau)))
+        for i in range((len(tau))):
+            g_00_val[i] = metric_values[i,0,0] 
+        fig16, px = plt.subplots()
+        px.plot(tau, g_00_val)
+        px.set_ylabel(f'g_00 Value')
+        if massive:
+            px.set_xlabel('Proper Time')
+        else: 
+            px.set_xlabel('Affine Parameter')
+        st.session_state['plot16'] = fig16
+        g_11_val = np.zeros((len(tau)))
+        for i in range((len(tau))):
+            g_11_val[i] = metric_values[i,1,1]
+        fig17, qx = plt.subplots()
+        qx.plot(tau, g_11_val)
+        qx.set_ylabel(f'g_11 Value')
+        if massive:
+            qx.set_xlabel('Proper Time')
+        else: 
+            qx.set_xlabel('Affine Parameter')
+        st.session_state['plot17'] = fig17
+        st.session_state['plots'] = (st.session_state['plot2'], st.session_state['plot3'], st.session_state['plot4'],
+        st.session_state['plot5'], st.session_state['plot6'], st.session_state['plot7'], st.session_state['plot8'],
+        st.session_state['plot9'], st.session_state['plot10'], st.session_state['plot11'], st.session_state['plot12'],
+        st.session_state['plot13'], st.session_state['plot14'], st.session_state['plot15'], st.session_state['plot16'],
+        st.session_state['plot17'], st.session_state['plot19'], st.session_state['plot20'],
+        st.session_state['plot21'], st.session_state['plot22'])
+    if 'plots' in st.session_state:
+        left1, middle, right1 = st.columns([3,3,3])
+        with left1:
+            with st.expander('Velocities (Proper Time)'):
+                st.pyplot(st.session_state.plot2)
+                st.pyplot(st.session_state.plot3)
+                st.pyplot(st.session_state.plot4)
+                st.pyplot(st.session_state.plot5)
+                st.pyplot(st.session_state.plot12)
+            with st.expander('Coordinate Velocities'):
+                st.pyplot(st.session_state.plot13)
+                st.pyplot(st.session_state.plot14)
+                st.pyplot(st.session_state.plot15)
+        with middle:
+            with st.expander('Positions'):
+                st.pyplot(st.session_state.plot6)
+                st.pyplot(st.session_state.plot7)
+                st.pyplot(st.session_state.plot8)
+                st.pyplot(st.session_state.plot9)
+            with st.expander('Momenta'):
+                st.pyplot(st.session_state.plot20)
+                st.pyplot(st.session_state.plot21)
+                st.pyplot(st.session_state.plot19)
+                st.pyplot(st.session_state.plot22)
+        with right1:
+            with st.expander('Coordinate Velocity'):
+                st.pyplot(st.session_state.plot13)
+                st.pyplot(st.session_state.plot14)
+                st.pyplot(st.session_state.plot15)
+            with st.expander('Metric Components'):
+                st.pyplot(st.session_state.plot16)
+                st.pyplot(st.session_state.plot17)
+
