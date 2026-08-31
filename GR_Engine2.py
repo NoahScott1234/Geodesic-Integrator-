@@ -182,3 +182,39 @@ def cartesian_to_spherical(starting_position, three_velocity):
     spherical_velocity[1] = np.dot(three_velocity,e_theta)
     spherical_velocity[2] = np.dot(three_velocity,e_phi)
     return *spherical_position, * spherical_velocity
+def draw_schwarzchild(grav_const, mass, lightspeed):
+    r_h = 2 * grav_const * mass / lightspeed**2
+    r_p = 3 * grav_const * mass / lightspeed**2
+    u = np.linspace(0, 2*np.pi, 60)
+    v = np.linspace(0, np.pi, 30)
+    U, V = np.meshgrid(u, v)
+    X = r_h * np.cos(U) * np.sin(V)
+    Y = r_h * np.sin(U) * np.sin(V)
+    Z = r_h * np.cos(V)
+    
+    X1 = r_p * np.cos(U) * np.sin(V)
+    Y1 = r_p * np.sin(U) * np.sin(V)
+    Z1 = r_p * np.cos(V)
+    return X, Y, Z, X1, Y1, Z1
+def draw_kerr(grav_const, mass, lightpseed, spin_parameter):
+    u = np.linspace(0, 2*np.pi, 60)
+    v = np.linspace(0, np.pi, 30)
+    U, V = np.meshgrid(u, v)
+    r_o = grav_const * mass + np.sqrt(grav_const**2 * mass**2 - spin_parameter**2)
+    r_i = grav_const * mass - np.sqrt(grav_const**2 * mass**2 - spin_parameter**2)
+    r_e = np.sqrt((grav_const * mass)**2 -(spin_parameter * np.cos(V))**2) + grav_const * mass
+    
+    X = r_i * np.cos(U) * np.sin(V)
+    Y = r_i * np.sin(U) * np.sin(V)
+    Z = r_i * np.cos(V)
+
+    X1 = r_o * np.cos(U) * np.sin(V)
+    Y1 = r_o * np.sin(U) * np.sin(V)
+    Z1 = r_o * np.cos(V)
+   
+    X2 = r_e * np.cos(U) * np.sin(V)
+    Y2 = r_e * np.sin(U) * np.sin(V)
+    Z2 = r_e * np.cos(V)
+    return X, Y, Z, X1, Y1, Z1, X2, Y2, Z2
+   
+
